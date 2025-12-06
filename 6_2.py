@@ -17,17 +17,23 @@ for c in reversed(ops):
 lens.reverse()
 
 res = [0] * len(lens)
-for line in data[:-1]:
-    shift = 0
-    for l in range(len(lens)):
-        (ll, c) = lens[l]
-        num = int(line[shift:shift + ll].strip())
+shift = 0
+for l in range(len(lens)):
+    (ll, c) = lens[l]
+    for i in range(ll):
+        num_text = ""
+
+        for line in data[:-1]:
+            num_text += line[shift + i]
+
+        num = int(num_text.strip())
+
         if c == '+':
             res[l] += num
         elif c == '*':
             if res[l] == 0:
                 res[l] = 1
             res[l] *= num
-        shift += ll + 1
+    shift += ll + 1
 
 print(sum(res))
