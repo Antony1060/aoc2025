@@ -54,10 +54,9 @@ fn main() {
         .into_par_iter()
         .map({
             |i| {
+                println!("{i}=start");
                 let mut mx: u64 = 0;
                 for (cnt, j) in ((i + 1)..coords.len()).enumerate() {
-                    println!("{i}={cnt}/{}", ub);
-
                     let c1 = &coords[i];
                     let c2 = &coords[j];
 
@@ -68,6 +67,7 @@ fn main() {
                     let area = (c1.x.abs_diff(c2.x) + 1) * (c1.y.abs_diff(c2.y) + 1);
                     mx = max(mx, area);
                 }
+                println!("{i}=end");
 
                 mx
             }
@@ -96,6 +96,8 @@ fn is_good_point(ctx: &Ctx, coord: &Coord) -> bool {
 
     let mut d = 0;
 
+    let mut visited: Vec<Coord> = Vec::new();
+
     loop {
         let (dx, dy) = (coord.x + d, coord.y + d);
 
@@ -106,11 +108,15 @@ fn is_good_point(ctx: &Ctx, coord: &Coord) -> bool {
         if !h1 {
             if is_in_range(&ctx.x_ranges, dx, coord.y) {
                 h1 = true;
+            } else {
+                visited.push(Coord { x: dx, y: coord.y });
             }
         }
         if !h2 {
             if is_in_range(&ctx.y_ranges, dy, coord.x) {
                 h2 = true;
+            } else {
+                visited.push(Coord { x: coord.x, y: dy });
             }
         }
 
@@ -123,16 +129,31 @@ fn is_good_point(ctx: &Ctx, coord: &Coord) -> bool {
         if !h3 {
             if is_in_range(&ctx.x_ranges, dx as u64, coord.y) {
                 h3 = true;
+            } else {
+                visited.push(Coord {
+                    x: dx as u64,
+                    y: coord.y,
+                });
             }
         }
         if !h4 {
             if is_in_range(&ctx.y_ranges, dy as u64, coord.x) {
                 h4 = true;
+            } else {
+                visited.push(Coord {
+                    x: coord.x,
+                    y: dy as u64,
+                });
             }
         }
 
         if h1 && h2 && h3 && h4 {
-            (*POINT_DP).write().unwrap().insert(coord.clone(), true);
+            let mut lock = (*POINT_DP).write().unwrap();
+            lock.insert(coord.clone(), true);
+            for c in visited {
+                lock.insert(c, true);
+            }
+            drop(lock);
 
             return true;
         }
@@ -140,7 +161,12 @@ fn is_good_point(ctx: &Ctx, coord: &Coord) -> bool {
         d += 1
     }
 
-    (*POINT_DP).write().unwrap().insert(coord.clone(), false);
+    let mut lock = (*POINT_DP).write().unwrap();
+    lock.insert(coord.clone(), false);
+    for c in visited {
+        lock.insert(c, false);
+    }
+    drop(lock);
     false
 }
 
