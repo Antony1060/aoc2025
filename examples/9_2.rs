@@ -3,7 +3,6 @@ use rayon::prelude::IntoParallelIterator;
 use std::cmp::{max, min};
 use std::collections::HashMap;
 use std::ops::RangeInclusive;
-use std::sync::RwLock;
 
 const INPUT: &str = include_str!("../input.txt");
 
@@ -23,9 +22,6 @@ struct Ctx {
     x_ranges: Vec<MovingRng>,
     y_ranges: Vec<MovingRng>,
 }
-
-static POINT_DP: once_cell::sync::Lazy<RwLock<HashMap<Coord, bool>>> =
-    once_cell::sync::Lazy::new(|| RwLock::new(HashMap::new()));
 
 fn main() {
     let input = INPUT.trim();
@@ -49,25 +45,25 @@ fn main() {
         y_ranges,
     };
 
-    let ub = (coords.len() * (coords.len() - 1)) / 2 / 32;
     let mx = (0..(coords.len() - 1))
         .into_par_iter()
         .map({
             |i| {
-                println!("{i}=start");
+                let mut dp = HashMap::new();
+                println!("{i}: start");
                 let mut mx: u64 = 0;
-                for (cnt, j) in ((i + 1)..coords.len()).enumerate() {
+                for j in (i + 1)..coords.len() {
                     let c1 = &coords[i];
                     let c2 = &coords[j];
 
-                    if !is_good_square(&ctx, c1, c2) {
+                    if !is_good_square(&ctx, &mut dp, c1, c2) {
                         continue;
                     }
 
                     let area = (c1.x.abs_diff(c2.x) + 1) * (c1.y.abs_diff(c2.y) + 1);
                     mx = max(mx, area);
                 }
-                println!("{i}=end");
+                println!("{i}: end");
 
                 mx
             }
@@ -84,8 +80,11 @@ fn is_in_range(ranges: &[MovingRng], constant: u64, delta: u64) -> bool {
         .any(|(c, rng)| *c == constant && rng.contains(&delta))
 }
 
-fn is_good_point(ctx: &Ctx, coord: &Coord) -> bool {
-    if let Some(ret) = (*POINT_DP).read().unwrap().get(coord) {
+fn is_good_point(ctx: &Ctx, dp: &mut Vec<Vec<bool>>, coord: &Coord) -> bool {
+    if let Some(ret) = dp
+        .get(coord.x as usize)
+        .and_then(|it| it.get(coord.y as usize))
+    {
         return *ret;
     }
 
@@ -148,12 +147,10 @@ fn is_good_point(ctx: &Ctx, coord: &Coord) -> bool {
         }
 
         if h1 && h2 && h3 && h4 {
-            let mut lock = (*POINT_DP).write().unwrap();
-            lock.insert(coord.clone(), true);
+            dp.insert(coord.clone(), true);
             for c in visited {
-                lock.insert(c, true);
+                dp.insert(c, true);
             }
-            drop(lock);
 
             return true;
         }
@@ -161,27 +158,30 @@ fn is_good_point(ctx: &Ctx, coord: &Coord) -> bool {
         d += 1
     }
 
-    let mut lock = (*POINT_DP).write().unwrap();
-    lock.insert(coord.clone(), false);
+    dp.insert(coord.clone(), false);
     for c in visited {
-        lock.insert(c, false);
+        dp.insert(c, false);
     }
-    drop(lock);
     false
 }
 
-fn is_good_square(ctx: &Ctx, coord1: &Coord, coord2: &Coord) -> bool {
+fn is_good_square(
+    ctx: &Ctx,
+    dp: &mut HashMap<Coord, bool>,
+    coord1: &Coord,
+    coord2: &Coord,
+) -> bool {
     for i in min(coord1.x, coord2.x)..=max(coord1.x, coord2.x) {
-        if !is_good_point(ctx, &Coord { x: i, y: coord1.y })
-            || !is_good_point(ctx, &Coord { x: i, y: coord2.y })
+        if !is_good_point(ctx, dp, &Coord { x: i, y: coord1.y })
+            || !is_good_point(ctx, dp, &Coord { x: i, y: coord2.y })
         {
             return false;
         }
     }
 
     for i in min(coord1.y, coord2.y)..=max(coord1.y, coord2.y) {
-        if !is_good_point(ctx, &Coord { x: coord1.x, y: i })
-            || !is_good_point(ctx, &Coord { x: coord2.x, y: i })
+        if !is_good_point(ctx, dp, &Coord { x: coord1.x, y: i })
+            || !is_good_point(ctx, dp, &Coord { x: coord2.x, y: i })
         {
             return false;
         }
