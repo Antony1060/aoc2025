@@ -1,5 +1,6 @@
 use rayon::iter::ParallelIterator;
 use rayon::prelude::IntoParallelIterator;
+use std::cell::RefCell;
 use std::cmp::{max, min};
 use std::collections::HashMap;
 use std::ops::RangeInclusive;
@@ -14,6 +15,10 @@ struct Coord {
 
 type Rng = RangeInclusive<u64>;
 type MovingRng = (u64, Rng);
+
+thread_local! {
+    static POINTS_DP: RefCell<HashMap<Coord, bool>> = RefCell::new(HashMap::new());
+}
 
 #[derive(Debug)]
 struct Ctx {
@@ -49,14 +54,13 @@ fn main() {
         .into_par_iter()
         .map({
             |i| {
-                let mut dp = HashMap::new();
                 println!("{i}");
                 let mut mx: u64 = 0;
                 for j in (i + 1)..coords.len() {
                     let c1 = &coords[i];
                     let c2 = &coords[j];
 
-                    if !is_good_square(&ctx, &mut dp, c1, c2) {
+                    if !is_good_square(&ctx, c1, c2) {
                         continue;
                     }
 
@@ -79,9 +83,9 @@ fn is_in_range(ranges: &[MovingRng], constant: u64, delta: u64) -> bool {
         .any(|(c, rng)| *c == constant && rng.contains(&delta))
 }
 
-fn is_good_point(ctx: &Ctx, dp: &mut HashMap<Coord, bool>, coord: &Coord) -> bool {
-    if let Some(ret) = dp.get(coord) {
-        return *ret;
+fn is_good_point(ctx: &Ctx, coord: &Coord) -> bool {
+    if let Some(ret) = POINTS_DP.with_borrow(|dp| dp.get(coord).copied()) {
+        return ret;
     }
 
     let mut h1 = false;
@@ -143,10 +147,12 @@ fn is_good_point(ctx: &Ctx, dp: &mut HashMap<Coord, bool>, coord: &Coord) -> boo
         }
 
         if h1 && h2 && h3 && h4 {
-            dp.insert(coord.clone(), true);
-            for c in visited {
-                dp.insert(c, true);
-            }
+            POINTS_DP.with_borrow_mut(|dp| {
+                dp.insert(coord.clone(), true);
+                for c in visited {
+                    dp.insert(c, true);
+                }
+            });
 
             return true;
         }
@@ -154,30 +160,27 @@ fn is_good_point(ctx: &Ctx, dp: &mut HashMap<Coord, bool>, coord: &Coord) -> boo
         d += 1
     }
 
-    dp.insert(coord.clone(), false);
-    for c in visited {
-        dp.insert(c, false);
-    }
+    POINTS_DP.with_borrow_mut(|dp| {
+        dp.insert(coord.clone(), false);
+        for c in visited {
+            dp.insert(c, false);
+        }
+    });
     false
 }
 
-fn is_good_square(
-    ctx: &Ctx,
-    dp: &mut HashMap<Coord, bool>,
-    coord1: &Coord,
-    coord2: &Coord,
-) -> bool {
+fn is_good_square(ctx: &Ctx, coord1: &Coord, coord2: &Coord) -> bool {
     for i in min(coord1.x, coord2.x)..=max(coord1.x, coord2.x) {
-        if !is_good_point(ctx, dp, &Coord { x: i, y: coord1.y })
-            || !is_good_point(ctx, dp, &Coord { x: i, y: coord2.y })
+        if !is_good_point(ctx, &Coord { x: i, y: coord1.y })
+            || !is_good_point(ctx, &Coord { x: i, y: coord2.y })
         {
             return false;
         }
     }
 
     for i in min(coord1.y, coord2.y)..=max(coord1.y, coord2.y) {
-        if !is_good_point(ctx, dp, &Coord { x: coord1.x, y: i })
-            || !is_good_point(ctx, dp, &Coord { x: coord2.x, y: i })
+        if !is_good_point(ctx, &Coord { x: coord1.x, y: i })
+            || !is_good_point(ctx, &Coord { x: coord2.x, y: i })
         {
             return false;
         }
