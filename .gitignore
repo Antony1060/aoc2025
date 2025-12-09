@@ -1,2 +1,7 @@
 input.txt
 ./venv
+
+
+# Added by cargo
+
+/target
