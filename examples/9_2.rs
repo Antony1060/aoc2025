@@ -50,7 +50,7 @@ fn main() {
         .map({
             |i| {
                 let mut dp = HashMap::new();
-                println!("{i}: start");
+                println!("{i}");
                 let mut mx: u64 = 0;
                 for j in (i + 1)..coords.len() {
                     let c1 = &coords[i];
@@ -63,7 +63,6 @@ fn main() {
                     let area = (c1.x.abs_diff(c2.x) + 1) * (c1.y.abs_diff(c2.y) + 1);
                     mx = max(mx, area);
                 }
-                println!("{i}: end");
 
                 mx
             }
@@ -80,11 +79,8 @@ fn is_in_range(ranges: &[MovingRng], constant: u64, delta: u64) -> bool {
         .any(|(c, rng)| *c == constant && rng.contains(&delta))
 }
 
-fn is_good_point(ctx: &Ctx, dp: &mut Vec<Vec<bool>>, coord: &Coord) -> bool {
-    if let Some(ret) = dp
-        .get(coord.x as usize)
-        .and_then(|it| it.get(coord.y as usize))
-    {
+fn is_good_point(ctx: &Ctx, dp: &mut HashMap<Coord, bool>, coord: &Coord) -> bool {
+    if let Some(ret) = dp.get(coord) {
         return *ret;
     }
 
