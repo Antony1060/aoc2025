@@ -1,54 +1,49 @@
+from z3 import *
+
 data = ""
 with open("./input.txt", "r") as f:
     data = f.read().strip()
 
 res = 0
-i = 0
+line_cnt = 0
 for line in data.split("\n"):
-    print(f"{i=}")
-    i += 1
+    print(f"i={line_cnt}")
+    line_cnt += 1
     s = line.split(" ")
     target = list(map(int, s[-1][1:-1].split(",")))
     toggles = s[1:-1]
     toggles = list(map(lambda x: list(map(int, x[1:-1].split(","))), toggles))
-    
+
     tl = len(target)
-    curr = [[0] * tl]
-    d = 0
-    visited = set()
-    while True:
-        done = False
-        for c in curr:
-            if c == target:
-                res += d
-                done = True
-                break
 
-        if done:
-            break
+    matrices = []
+    for toggle in toggles:
+        matrix = [0] * tl
+        for idx in toggle:
+            matrix[idx] = 1
+        matrices.append(matrix)
 
-        new_curr = []
-        if len(curr) == 0:
-            print("bad")
-            exit(1)
-        print(f"{d=}")
-        for c in curr:
-            visited.add(tuple(c))
-            for t in toggles:
-                ns = [*c]
-                for idx in t:
-                    ns[idx] += 1
+    init = [0] * tl
+    matlen = len(matrices)
 
-                for idx in range(len(ns)):
-                    if ns[idx] > target[idx]:
-                        break
-                else:
-                    val = tuple(ns)
-                    if val not in visited:
-                        new_curr.append(ns)
+    # Z3 magic
+    opt = Optimize()
+    k = [Int(f"k_{i}") for i in range(matlen)]
 
-        curr = new_curr
+    for i in range(matlen):
+        opt.add(k[i] >= 0)
 
-        d += 1
+    for j in range(tl):
+        opt.add(init[j] + Sum([k[i] * matrices[i][j] for i in range(matlen)]) == target[j])
+
+    opt.minimize(Sum(k))
+
+    if opt.check() == sat:
+        model = opt.model()
+        total = 0
+        for i in range(matlen):
+            total += model[k[i]].as_long()
+        res += total
+    
 
 print(res)
