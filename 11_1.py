@@ -9,7 +9,6 @@ def make_node(line):
 
 nodes = dict(map(make_node, data.split("\n")))
 
-visited = set()
 dp = dict()
 
 def walk(curr):
@@ -18,10 +17,6 @@ def walk(curr):
 
     if curr in dp:
         return dp[curr]
-
-    if curr in visited:
-        return 0
-    visited.add(curr)
 
     dp[curr] = 0
     for child in nodes[curr]:

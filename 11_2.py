@@ -9,12 +9,28 @@ def make_node(line):
 
 nodes = dict(map(make_node, data.split("\n")))
 
-visited = set()
+dp_fft_dac = dict()
 dp = dict()
 
-def walk(curr, fft, dac):
+def walk(curr):
     if curr == "out":
-        return (1, fft, dac)
+        return 1
+
+    if curr in dp:
+        return dp[curr]
+
+    dp[curr] = 0
+    for child in nodes[curr]:
+        dp[curr] += walk(child)
+
+    return dp[curr]
+
+def walk_fft_dac(curr, fft = False, dac = False):
+    if fft and dac:
+        return dp[curr]
+
+    if curr == "out":
+        return 1 if fft and dac else 0
 
     if curr == "fft":
         fft = True
@@ -22,18 +38,19 @@ def walk(curr, fft, dac):
     if curr == "dac":
         dac = True
 
-    val = 0
+    dp_key = (curr, fft, dac)
+    if dp_key in dp_fft_dac:
+        return dp_fft_dac[dp_key]
+
+    dp_fft_dac[dp_key] = 0
     for child in nodes[curr]:
-        w_val, w_fft, w_dac = walk(child, fft, dac)
-        if not fft and not w_fft:
-            continue
-        if not dac and not w_dac:
-            continue
-        val += w_val
-    dp[curr] = (val, fft, dac)
+        dp_fft_dac[dp_key] += walk_fft_dac(child, fft, dac)
 
-    return dp[curr]
+    return dp_fft_dac[dp_key]
 
-res = walk("svr", False, False)
+for key in nodes.keys():
+    walk(key)
+
+res = walk_fft_dac("svr")
 
 print(res)
