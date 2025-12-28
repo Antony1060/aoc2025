@@ -458,6 +458,8 @@ uint64_t compute_answer(coords_vec coords, uint8_t *points) {
     cl_mem rects_buffer = clCreateBuffer(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, rects_sz, rects, &err);
     CL_ERRQUIT_CHECK("clCreateBuffer: rects");
 
+    free(rects);
+
     cl_mem areas_buffer = clCreateBuffer(ctx, CL_MEM_WRITE_ONLY, rects_sz, NULL, &err);
     CL_ERRQUIT_CHECK("clCreateBuffer: areas");
 
@@ -500,6 +502,8 @@ uint64_t compute_answer(coords_vec coords, uint8_t *points) {
     }
 
     clock_gettime(CLOCK_REALTIME, &end);
+
+    free(outs);
 
     {
         float ns = timespec_diff_ns(&start, &end);
