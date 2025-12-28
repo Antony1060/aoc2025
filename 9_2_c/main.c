@@ -190,12 +190,16 @@ void compute_pass(uint8_t *points, task_unit unit) {
     }
 }
 
-void compute_points(uint8_t *points) {
+uint64_t compute_answer(coords_vec coords, uint8_t *points) {
     const size_t total_units = 2 * GRID_Y + 2 * GRID_X;
     task_unit *units = malloc(total_units * sizeof(*units));
     // would be notifibly faster if we called compute_pass without filling an array first
     //  I assume cache hits, but idc, the point of this project is more running it on a gpu than cpu
     fill_task_units(units);
+
+    fprintf(stderr, "** computing points");
+    struct timespec start, end;
+    clock_gettime(CLOCK_REALTIME, &start);
 
     const uint64_t tenth = total_units / 10;
     for (size_t i = 0; i < total_units; i++) {
@@ -207,7 +211,44 @@ void compute_points(uint8_t *points) {
         compute_pass(points, units[i]);
     }
 
+    clock_gettime(CLOCK_REALTIME, &end);
+
+    fprintf(stderr, "\n");
     free(units);
+
+    {
+        float ns = timespec_diff_ns(&start, &end);
+        float ms = ns / 1000000;
+        float s = ms / 1000;
+        fprintf(stderr, "** timings: compute (%.2fs, %.2fms)\n", s, ms);
+    }
+
+    fprintf(stderr, "** finding maximum rectangle\n");
+    clock_gettime(CLOCK_REALTIME, &start);
+    uint64_t mx = 0;
+    for (size_t i = 0; i < coords.size - 1; i++) {
+        for (size_t j = i + 1; j < coords.size; j++) {
+            vec2 *c1 = &coords.data[i];
+            vec2 *c2 = &coords.data[j];
+
+            if (!is_good_square(points, c1, c2)) {
+                continue;
+            }
+
+            uint64_t area = (uint64_t) (ABS_DIFF(c1->x, c2->x) + 1) * (uint64_t) (ABS_DIFF(c1->y, c2->y) + 1);
+            mx = MAX(mx, area);
+        }
+    }
+    clock_gettime(CLOCK_REALTIME, &end);
+
+    {
+        float ns = timespec_diff_ns(&start, &end);
+        float ms = ns / 1000000;
+        float s = ms / 1000;
+        fprintf(stderr, "** timings: lookup (%.2fs, %.2fms)\n", s, ms);
+    }
+
+    return mx;
 }
 #else
 void cl_context_callback(const char *errinfo, const void *private_info, size_t cb, void* user_data) {
@@ -219,11 +260,12 @@ cl_int err;
 #define CL_ERRQUIT_CHECK(detail) do { \
     if (err != CL_SUCCESS) { \
         fprintf(stderr, "** ! error: %s: %d\n", detail, err); \
-        return; \
+        return RET; \
     } \
 } while (0)
 
 void run_kernel(const char *name, task_unit *units, size_t unit_len, cl_command_queue queue, cl_kernel kernel, cl_mem tasks_buffer, cl_event *dep, cl_event *event) {
+#define RET
     fprintf(stderr, "*** queueing sub-task: %s\n", name);
 
     cl_event write;
@@ -235,14 +277,12 @@ void run_kernel(const char *name, task_unit *units, size_t unit_len, cl_command_
     CL_ERRQUIT_CHECK("clEnqueueNDRangeKernel");
 
     *event = run;
+#undef RET
 }
 
-// caller of this assumes same-line logs for "* computing points"
-//  cpu version adds funny dots to signify progrss
-void compute_points(uint8_t *points) {
+uint64_t compute_answer(coords_vec coords, uint8_t *points) {
+#define RET 1
     // this is gonna be a long function lmao
-    (void) points;
-    fprintf(stderr, "\n");
 
     // platform scan
     cl_uint n_platforms = 0;
@@ -255,7 +295,7 @@ void compute_points(uint8_t *points) {
     // assume first platform
     if (n_platforms == 0) {
        fprintf(stderr, "** ! no platforms found");
-       return;
+       return 0;
     }
 
     if (n_platforms > 1) {
@@ -281,7 +321,7 @@ void compute_points(uint8_t *points) {
     // assume first device
     if (n_devices == 0) {
        fprintf(stderr, "** ! no devices found");
-       return;
+       return 0;
     }
 
     if (n_devices > 1) {
@@ -309,7 +349,14 @@ void compute_points(uint8_t *points) {
     CL_ERRQUIT_CHECK("clCreateProgramWithSource");
 
     err = clBuildProgram(program, 1, &device, /* options */ NULL, /* notify cb */ NULL, /* user_data */NULL);
-    CL_ERRQUIT_CHECK("clBuildProgram");
+    if (err != CL_SUCCESS) {
+        char build_log[10240];
+
+        err = clGetProgramBuildInfo(program, device, CL_PROGRAM_BUILD_LOG, ARR_LEN(build_log), build_log, NULL);
+        CL_ERRQUIT_CHECK("clGetProgramBuildInfo");
+
+        fprintf(stderr, "build log:\n%s\n\n", build_log);
+    }
 
     // queue
     fprintf(stderr, "** preparing buffers\n");
@@ -339,17 +386,17 @@ void compute_points(uint8_t *points) {
 
     // set args
     err = clSetKernelArg(grid_pass_kernel, 0, sizeof(points_buffer), &points_buffer);
-    CL_ERRQUIT_CHECK("clCreateKernel: points_buffer");
+    CL_ERRQUIT_CHECK("clSetKernelArg: points_buffer");
 
     err = clSetKernelArg(grid_pass_kernel, 1, sizeof(tasks_buffer), &tasks_buffer);
-    CL_ERRQUIT_CHECK("clCreateKernel: tasks_buffer");
+    CL_ERRQUIT_CHECK("clSetKernelArg: tasks_buffer");
 
     svec2 grid = {
         .x = (int32_t) GRID_X,
         .y = (int32_t) GRID_Y,
     };
     err = clSetKernelArg(grid_pass_kernel, 2, sizeof(svec2), &grid);
-    CL_ERRQUIT_CHECK("clCreateKernel: grid_vec");
+    CL_ERRQUIT_CHECK("clSetKernelArg: grid_vec");
 
     fprintf(stderr, "*** starting tasks\n");
 
@@ -377,24 +424,101 @@ void compute_points(uint8_t *points) {
 
     clock_gettime(CLOCK_REALTIME, &end);
 
-    float ns = timespec_diff_ns(&start, &end);
-    float ms = ns / 1000000;
-    float s = ms / 1000;
-    fprintf(stderr, "** compute timings (%.2fs, %.2fms)\n", s, ms);
-
-    fprintf(stderr, "** reading buffer\n");
-    err = clEnqueueReadBuffer(queue, points_buffer, CL_TRUE, 0, points_sz, points, 0, NULL, NULL);
-    CL_ERRQUIT_CHECK("clEnqueueReadBuffer");
-
-    err = clReleaseMemObject(points_buffer);
-    CL_ERRQUIT_CHECK("clReleaseMemObject: points");
+    {
+        float ns = timespec_diff_ns(&start, &end);
+        float ms = ns / 1000000;
+        float s = ms / 1000;
+        fprintf(stderr, "** timings: compute (%.2fs, %.2fms)\n", s, ms);
+    }
 
     err = clReleaseMemObject(tasks_buffer);
     CL_ERRQUIT_CHECK("clReleaseMemObject: tasks");
 
     free(units);
 
-    fprintf(stderr, "** > timings");
+    typedef struct {
+        vec2 c1;
+        vec2 c2;
+    } rect;
+    rect *rects = malloc(coords.size * coords.size * sizeof(rect));
+
+    size_t cnt = 0;
+    for (size_t i = 0; i < coords.size - 1; i++) {
+        for (size_t j = i + 1; j < coords.size; j++) {
+            rects[cnt++] = (rect) {
+                .c1 = coords.data[i],
+                .c2 = coords.data[j],
+            };
+        }
+    }
+
+    size_t rects_sz = cnt * sizeof(rect);
+    size_t out_sz = cnt * sizeof(uint64_t);
+
+    cl_mem rects_buffer = clCreateBuffer(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, rects_sz, rects, &err);
+    CL_ERRQUIT_CHECK("clCreateBuffer: rects");
+
+    cl_mem areas_buffer = clCreateBuffer(ctx, CL_MEM_WRITE_ONLY, rects_sz, NULL, &err);
+    CL_ERRQUIT_CHECK("clCreateBuffer: areas");
+
+    // create kernel
+    fprintf(stderr, "** creating kernel\n");
+    cl_kernel rect_kernel = clCreateKernel(program, "rectangle_pass", &err);
+    CL_ERRQUIT_CHECK("clCreateKernel");
+
+    // set args
+    err = clSetKernelArg(rect_kernel, 0, sizeof(points_buffer), &points_buffer);
+    CL_ERRQUIT_CHECK("clSetKernelArg: points_buffer");
+
+    err = clSetKernelArg(rect_kernel, 1, sizeof(rects_buffer), &rects_buffer);
+    CL_ERRQUIT_CHECK("clSetKernelArg: rects_buffer");
+
+    err = clSetKernelArg(rect_kernel, 2, sizeof(areas_buffer), &areas_buffer);
+    CL_ERRQUIT_CHECK("clSetKernelArg: areas_buffer");
+
+    err = clSetKernelArg(rect_kernel, 3, sizeof(svec2), &grid);
+    CL_ERRQUIT_CHECK("clSetKernelArg: grid_vec");
+
+    cl_event run;
+    err = clEnqueueNDRangeKernel(queue, rect_kernel, 1, NULL, &cnt, NULL, 0, NULL, &run);
+    CL_ERRQUIT_CHECK("clEnqueueNDRangeKernel");
+
+    err = clFlush(queue);
+    CL_ERRQUIT_CHECK("clFlush");
+
+    uint64_t *outs = malloc(out_sz);
+
+    clock_gettime(CLOCK_REALTIME, &start);
+
+    fprintf(stderr, "** reading buffer\n");
+    err = clEnqueueReadBuffer(queue, areas_buffer, CL_TRUE, 0, out_sz, outs, 1, &run, NULL);
+    CL_ERRQUIT_CHECK("clEnqueueReadBuffer");
+
+    uint64_t mx = 0;
+    for (size_t i = 0; i < cnt; i++) {
+        mx = MAX(mx, outs[i]);
+    }
+
+    clock_gettime(CLOCK_REALTIME, &end);
+
+    {
+        float ns = timespec_diff_ns(&start, &end);
+        float ms = ns / 1000000;
+        float s = ms / 1000;
+        fprintf(stderr, "** timings: lookup (%.2fs, %.2fms)\n", s, ms);
+    }
+
+    err = clReleaseMemObject(points_buffer);
+    CL_ERRQUIT_CHECK("clReleaseMemObject: points");
+
+    err = clReleaseMemObject(rects_buffer);
+    CL_ERRQUIT_CHECK("clReleaseMemObject: rects");
+
+    err = clReleaseMemObject(areas_buffer);
+    CL_ERRQUIT_CHECK("clReleaseMemObject: areas");
+
+    return mx;
+#undef RET
 }
 #undef CL_ERRQUIT_CHECK
 #endif
@@ -422,32 +546,11 @@ int main() {
         join_range(points, coords.data[i], coords.data[i + 1]);
     join_range(points, coords.data[0], coords.data[coords.size - 1]);
 
-    fprintf(stderr, "* computing points");
+    fprintf(stderr, "* computing points\n");
     struct timespec start, end;
     clock_gettime(CLOCK_REALTIME, &start);
-    compute_points(points);
+    uint64_t mx = compute_answer(coords, points);
     clock_gettime(CLOCK_REALTIME, &end);
-
-    float ns = timespec_diff_ns(&start, &end);
-    float ms = ns / 1000000;
-    float s = ms / 1000;
-    fprintf(stderr, " (%.2fs, %.2fms)\n", s, ms);
-
-    fprintf(stderr, "* finding maximum rectangle\n");
-    uint64_t mx = 0;
-    for (size_t i = 0; i < coords.size - 1; i++) {
-        for (size_t j = i + 1; j < coords.size; j++) {
-            vec2 *c1 = &coords.data[i];
-            vec2 *c2 = &coords.data[j];
-
-            if (!is_good_square(points, c1, c2)) {
-                continue;
-            }
-
-            uint64_t area = (uint64_t) (ABS_DIFF(c1->x, c2->x) + 1) * (uint64_t) (ABS_DIFF(c1->y, c2->y) + 1);
-            mx = MAX(mx, area);
-        }
-    }
 
     printf("%lu\n", mx);
 
